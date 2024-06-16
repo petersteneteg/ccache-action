@@ -59742,7 +59742,7 @@ async function runInner() {
         ccachePath = await io.which(ccacheVariant, true);
         core.endGroup();
     }
-    core.setOutput("executable", ccachePath);
+    core.setOutput("executable", core.toPosixPath(ccachePath));
     core.startGroup("Restore cache");
     await restore(ccacheVariant);
     core.endGroup();

@@ -205,7 +205,7 @@ async function runInner() : Promise<void> {
     core.endGroup();
   }
 
-  core.setOutput("executable", ccachePath);
+  core.setOutput("executable", core.toPosixPath(ccachePath));
 
   core.startGroup("Restore cache");
   await restore(ccacheVariant);
