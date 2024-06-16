@@ -65406,9 +65406,9 @@ async function installCcacheLinux() {
     throw Error("Can't install ccache automatically under this platform, please install it yourself before using this action.");
 }
 async function installCcacheWindows() {
-    await installCcacheFromGitHub("4.9", "windows-x86_64", 
+    await installCcacheFromGitHub("4.11.3", "windows-x86_64", 
     // sha256sum of ccache.exe
-    "cf18d274a54b49dcd77f6c289c26eeb89d180cb8329711e607478ed5ef74918c", 
+    "e67407fc24a1ef04bb0368a2d63004879cbd46ae157ca75eec94ae5bddc5fb91", 
     // TODO find a better place
     `${external_process_namespaceObject.env.USERPROFILE}\\.cargo\\bin`, "ccache.exe");
 }
@@ -65511,6 +65511,7 @@ async function runInner() {
         ccachePath = await io.which(ccacheVariant, true);
         lib_core.endGroup();
     }
+    lib_core.setOutput("executable", lib_core.toPosixPath(ccachePath));
     lib_core.startGroup("Restore cache");
     await restore(ccacheVariant);
     lib_core.endGroup();
