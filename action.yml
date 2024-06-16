@@ -32,10 +32,16 @@ inputs:
     description: "If set to 'true', create symlinks for ccache in /usr/local/bin to override default toolchains"
     default: false
     required: false
+
+outputs:
+  executable: 
+    description: 'Path to the cache tool'
+
 runs:
   using: "node20"
   main: "dist/restore/index.js"
   post: "dist/save/index.js"
+
 branding:
   icon: "archive"
   color: "gray-dark"

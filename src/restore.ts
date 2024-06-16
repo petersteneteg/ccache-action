@@ -93,10 +93,10 @@ async function installCcacheLinux() : Promise<void> {
 
 async function installCcacheWindows() : Promise<void> {
   await installCcacheFromGitHub(
-    "4.9",
+    "4.10",
     "windows-x86_64",
     // sha256sum of ccache.exe
-    "cf18d274a54b49dcd77f6c289c26eeb89d180cb8329711e607478ed5ef74918c",
+    "cf7b51193b705826ad038223a0f5aabae689c90be6ea5ee9d7b87b6c32eeca3d",
     // TODO find a better place
     `${process.env.USERPROFILE}\\.cargo\\bin`,
     "ccache.exe"
@@ -204,6 +204,8 @@ async function runInner() : Promise<void> {
     ccachePath = await io.which(ccacheVariant, true);
     core.endGroup();
   }
+
+  core.setOutput("executable", ccachePath);
 
   core.startGroup("Restore cache");
   await restore(ccacheVariant);
