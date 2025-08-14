@@ -65308,6 +65308,17 @@ function formatStatsAsTable(statsJson) {
         [{ data: "Cache hits", header: true }, `${hits} / ${total}`, `${((hits / total) * 100).toPrecision(3)}%`]
     ];
 }
+function formatStatsAsString(statsJson) {
+    const stats = JSON.parse(statsJson);
+    if (stats === undefined) {
+        return null;
+    }
+    // @ts-ignore
+    const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
+    const misses = stats["cache_miss"];
+    const total = hits + misses;
+    return `Cache hits ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)`;
+}
 function cacheDir(ccacheVariant) {
     const ghWorkSpace = process.env.GITHUB_WORKSPACE || "unreachable, make ncc happy";
     if (ccacheVariant === "ccache") {
@@ -65363,57 +65374,67 @@ async function restore(ccacheVariant) {
         }
     }
 }
-async function configure(ccacheVariant, platform) {
+async function configure(ccacheVariant, ccachePath, platform) {
     const maxSize = lib_core.getInput('max-size');
     if (ccacheVariant === "ccache") {
-        await execShell(`ccache --set-config=cache_dir='${cacheDir(ccacheVariant)}'`);
-        await execShell(`ccache --set-config=max_size='${maxSize}'`);
-        await execShell(`ccache --set-config=compression=true`);
+        await execShell(`'${ccachePath}' --set-config=cache_dir='${cacheDir(ccacheVariant)}'`);
+        await execShell(`'${ccachePath}' --set-config=max_size='${maxSize}'`);
+        await execShell(`'${ccachePath}' --set-config=compression=true`);
         if (platform === "darwin") {
-            await execShell(`ccache --set-config=compiler_check=content`);
+            await execShell(`${ccachePath} --set-config=compiler_check=content`);
         }
         if (lib_core.getBooleanInput("create-symlink")) {
-            const ccache = await io.which("ccache");
-            await execShell(`ln -s ${ccache} /usr/local/bin/gcc`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/g++`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/cc`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/c++`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/clang`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/clang++`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/emcc`);
-            await execShell(`ln -s ${ccache} /usr/local/bin/em++`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/gcc`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/g++`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/cc`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/c++`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/clang`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/clang++`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/emcc`);
+            await execShell(`ln -s ${ccachePath} /usr/local/bin/em++`);
         }
         lib_core.info("Cccache config:");
-        await execShell("ccache -p");
+        await execShell(`${ccachePath} -p`);
     }
     else {
         const options = `SCCACHE_IDLE_TIMEOUT=0 SCCACHE_DIR='${cacheDir(ccacheVariant)}' SCCACHE_CACHE_SIZE='${maxSize}'`;
-        await execShell(`env ${options} sccache --start-server`);
+        await execShell(`env ${options} ${ccachePath} --start-server`);
     }
 }
 async function installCcacheMac() {
     await execShell("brew install ccache");
+    return await io.which("ccache", true);
 }
 async function installCcacheLinux() {
-    if (await io.which("apt-get")) {
-        await execShellSudo("apt-get install -y ccache");
-        return;
+    if (external_process_namespaceObject.arch == 'x64') {
+        await installCcacheFromGitHub("4.11.3", "linux-x86_64", "tar.xz", 
+        // sha256sum of ccache
+        "850c37237f086aa4f2d282b7e3bece2b6c5c306f709c13ea7407ba6bfd06b45d", "/usr/local/bin", "ccache");
+        return "/usr/local/bin/ccache";
     }
-    else if (await io.which("apk")) {
-        await execShell("apk add ccache");
-        return;
+    else {
+        if (await io.which("apt-get")) {
+            await execShellSudo("apt-get install -y ccache");
+            return await io.which("ccache", true);
+        }
+        else if (await io.which("apk")) {
+            await execShell("apk add ccache");
+            return await io.which("ccache", true);
+        }
+        throw Error("Can't install ccache automatically under this platform, please install it yourself before using this action.");
     }
-    throw Error("Can't install ccache automatically under this platform, please install it yourself before using this action.");
 }
 async function installCcacheWindows() {
-    await installCcacheFromGitHub("4.11.3", "windows-x86_64", 
-    // sha256sum of ccache.exe
-    "e67407fc24a1ef04bb0368a2d63004879cbd46ae157ca75eec94ae5bddc5fb91", 
     // TODO find a better place
-    `${external_process_namespaceObject.env.USERPROFILE}\\.cargo\\bin`, "ccache.exe");
+    const dir = `${lib_core.toPosixPath(external_process_namespaceObject.env.USERPROFILE ?? "")}/.cargo/bin`;
+    await installCcacheFromGitHub("4.11.3", "windows-x86_64", "zip", 
+    // sha256sum of ccache.exe
+    "e67407fc24a1ef04bb0368a2d63004879cbd46ae157ca75eec94ae5bddc5fb91", dir, "ccache.exe");
+    return `${dir}/ccache.exe`;
 }
 async function installSccacheMac() {
     await execShell("brew install sccache");
+    return await io.which("sccache", true);
 }
 async function installSccacheLinux() {
     let packageName;
@@ -65430,12 +65451,14 @@ async function installSccacheLinux() {
         default:
             throw new Error(`Unsupported architecture: ${external_process_namespaceObject.arch}`);
     }
-    await installSccacheFromGitHub("v0.10.0", packageName, sha256, "/usr/local/bin/", "sccache");
+    await installSccacheFromGitHub("v0.10.0", packageName, sha256, "/usr/local/bin", "sccache");
+    return "/usr/local/bin/sccache";
 }
 async function installSccacheWindows() {
-    await installSccacheFromGitHub("v0.10.0", "x86_64-pc-windows-msvc", "f3eff6014d973578498dbabcf1510fec2a624043d4035e15f2dc660fb35200d7", 
     // TODO find a better place
-    `${external_process_namespaceObject.env.USERPROFILE}\\.cargo\\bin`, "sccache.exe");
+    const dir = `${lib_core.toPosixPath(external_process_namespaceObject.env.USERPROFILE ?? "")}/.cargo/bin`;
+    await installSccacheFromGitHub("v0.10.0", "x86_64-pc-windows-msvc", "f3eff6014d973578498dbabcf1510fec2a624043d4035e15f2dc660fb35200d7", dir, "sccache.exe");
+    return `${dir}/sccache.exe`;
 }
 async function execShell(cmd) {
     await exec.exec("sh", ["-xc", cmd]);
@@ -65443,9 +65466,9 @@ async function execShell(cmd) {
 async function execShellSudo(cmd) {
     await execShell("$(which sudo) " + cmd);
 }
-async function installCcacheFromGitHub(version, artifactName, binSha256, binDir, binName) {
+async function installCcacheFromGitHub(version, artifactName, ext, binSha256, binDir, binName) {
     const archiveName = `ccache-${version}-${artifactName}`;
-    const url = `https://github.com/ccache/ccache/releases/download/v${version}/${archiveName}.zip`;
+    const url = `https://github.com/ccache/ccache/releases/download/v${version}/${archiveName}.${ext}`;
     const binPath = external_path_default().join(binDir, binName);
     await downloadAndExtract(url, external_path_default().join(archiveName, binName), binPath);
     checkSha256Sum(binPath, binSha256);
@@ -65472,6 +65495,10 @@ async function downloadAndExtract(url, srcFile, dstFile) {
         await execShell(`unzip '${zipName}' -d '${tmp}'`);
         external_fs_default().copyFileSync(external_path_default().join(tmp, srcFile), dstFile);
         external_fs_default().rmSync(tmp, { recursive: true });
+    }
+    else if (url.endsWith(".tar.xz")) {
+        await execShellSudo(`curl -L '${url}' | tar xfJ - -O '${srcFile}' > '${dstFile}'`);
+        await execShellSudo(`chmod a+x '${dstFile}'`);
     }
     else {
         await execShell(`curl -L '${url}' | tar xzf - -O --wildcards '${srcFile}' > '${dstFile}'`);
@@ -65506,18 +65533,20 @@ async function runInner() {
         if (!installer) {
             throw Error(`Unsupported platform: ${external_process_namespaceObject.platform}`);
         }
-        await installer();
-        lib_core.info(await io.which(ccacheVariant + ".exe"));
-        ccachePath = await io.which(ccacheVariant, true);
+        ccachePath = await installer();
+        lib_core.info(`Cache executable: ${ccachePath}`);
         lib_core.endGroup();
     }
+    // This will fail if we can not find the executable
+    await io.which(ccacheVariant, true);
+    await execShell(`${ccachePath} --version`);
     lib_core.setOutput("executable", lib_core.toPosixPath(ccachePath));
     lib_core.startGroup("Restore cache");
     await restore(ccacheVariant);
     lib_core.endGroup();
     lib_core.startGroup(`Configure ${ccacheVariant}, ${external_process_namespaceObject.platform}`);
-    await configure(ccacheVariant, external_process_namespaceObject.platform);
-    await execShell(`${ccacheVariant} -z`);
+    await configure(ccacheVariant, ccachePath, external_process_namespaceObject.platform);
+    await execShell(`${ccachePath} -z`);
     lib_core.endGroup();
 }
 async function run() {
