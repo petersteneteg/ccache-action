@@ -84,14 +84,11 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
     if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
       const jsonStats =
           await exec.getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], {silent: true});
-      const formattedStats = common.formatStatsAsTable(jsonStats.stdout)
+      const formattedStats = common.formatStatsAsString(jsonStats.stdout)
       if (formattedStats === null) {
         core.warning("Could not parse json stats")
       } else {
-        await core.summary
-            .addHeading(jobSummaryTitle)
-            .addTable(formattedStats)
-            .write()
+        core.notice(formattedStats)
       }
     }
 

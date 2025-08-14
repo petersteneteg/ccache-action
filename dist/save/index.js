@@ -65296,6 +65296,17 @@ function formatStatsAsTable(statsJson) {
         [{ data: "Cache hits", header: true }, `${hits} / ${total}`, `${((hits / total) * 100).toPrecision(3)}%`]
     ];
 }
+function formatStatsAsString(statsJson) {
+    const stats = JSON.parse(statsJson);
+    if (stats === undefined) {
+        return null;
+    }
+    // @ts-ignore
+    const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
+    const misses = stats["cache_miss"];
+    const total = hits + misses;
+    return `Cache hits ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)`;
+}
 function cacheDir(ccacheVariant) {
     const ghWorkSpace = process.env.GITHUB_WORKSPACE || "unreachable, make ncc happy";
     if (ccacheVariant === "ccache") {
@@ -65381,15 +65392,12 @@ async function run(earlyExit) {
         const jobSummaryTitle = core.getInput("job-summary");
         if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
             const jsonStats = await exec.getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
-            const formattedStats = formatStatsAsTable(jsonStats.stdout);
+            const formattedStats = formatStatsAsString(jsonStats.stdout);
             if (formattedStats === null) {
                 core.warning("Could not parse json stats");
             }
             else {
-                await core.summary
-                    .addHeading(jobSummaryTitle)
-                    .addTable(formattedStats)
-                    .write();
+                core.notice(formattedStats);
             }
         }
         core.endGroup();

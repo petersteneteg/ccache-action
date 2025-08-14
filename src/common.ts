@@ -64,6 +64,18 @@ export function formatStatsAsTable(statsJson: string) : SummaryTableRow[] | null
     ];
 }
 
+export function formatStatsAsString(statsJson: string) : string | null {
+    const stats = JSON.parse(statsJson);
+    if (stats === undefined) {
+        return null;
+    }
+    // @ts-ignore
+    const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
+    const misses = stats["cache_miss"];
+    const total = hits + misses;
+    return `Cache hits ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)`;
+}
+
 export function cacheDir(ccacheVariant: string): string {
     const ghWorkSpace = process.env.GITHUB_WORKSPACE || "unreachable, make ncc happy";
     if (ccacheVariant === "ccache") {
