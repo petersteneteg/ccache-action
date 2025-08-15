@@ -53,6 +53,15 @@ inputs:
       - detect (default): install ccache if not available
       - no: do not attempt to install ccache"
     default: detect
+  gh-token:
+    description: "github actions token for access to the octokit api to be able to remove old caches"
+    default: false
+    required: false
+  evict-old-caches:
+    description: "Flag for if you should evict old caches or not, useful for cleaning up old caches."
+    default: false
+    required: false
+
 
 outputs:
   executable: 

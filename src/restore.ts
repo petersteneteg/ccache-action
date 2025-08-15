@@ -334,7 +334,7 @@ async function restore(ccacheVariant: string): Promise<void> {
       core.setOutput("test-cache-hit", true)
     }
   } else {
-    core.info("No cache found.");
+    core.info(`No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
     if (SELF_CI) {
       core.setOutput("test-cache-hit", false)
     }
