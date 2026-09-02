@@ -90144,7 +90144,7 @@ async function restore(ccacheVariant) {
         }
     }
     else {
-        info("No cache found.");
+        info(`No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
         if (SELF_CI) {
             setOutput("test-cache-hit", false);
         }
@@ -90213,6 +90213,7 @@ async function runInner() {
     let ccachePath = await which(ccacheVariant, true);
     info(`${ccacheVariant} installed at ${ccachePath}`);
     endGroup();
+    setOutput("executable", toPosixPath(ccachePath));
     startGroup("Restore cache");
     await restore(ccacheVariant);
     endGroup();

@@ -334,7 +334,7 @@ async function restore(ccacheVariant: string): Promise<void> {
       core.setOutput("test-cache-hit", true)
     }
   } else {
-    core.info("No cache found.");
+    core.info(`No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
     if (SELF_CI) {
       core.setOutput("test-cache-hit", false)
     }
@@ -410,6 +410,8 @@ async function runInner(): Promise<void> {
   let ccachePath = await io.which(ccacheVariant, true);
   core.info(`${ccacheVariant} installed at ${ccachePath}`)
   core.endGroup();
+
+  core.setOutput("executable", core.toPosixPath(ccachePath));
 
   core.startGroup("Restore cache");
   await restore(ccacheVariant);

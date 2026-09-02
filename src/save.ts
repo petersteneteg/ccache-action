@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 import * as cache from "@actions/cache";
 import * as exec from "@actions/exec";
+import * as github from "@actions/github";
 import * as common from "./common";
 import {AgeUnit} from "./common";
 
@@ -64,6 +65,55 @@ export async function evictOldFiles(age : number, unit : common.AgeUnit) : Promi
   }
 }
 
+export async function evictOldCaches() {
+  const primaryKey = core.getState("primaryKey");
+  const token = core.getInput("gh-token");
+  if (!token) {
+    core.info("No github token provided, cannot list caches");
+    return;
+  }
+  if(core.getState("appendTimestamp") != "true") {
+    core.info("Evicting old caches is skipped because append-timestamp is not true.");
+    return; 
+  }
+  
+  const octokit = github.getOctokit(token);
+
+  // Paginate through all results
+  const allCaches = await octokit.paginate(
+    octokit.rest.actions.getActionsCacheList,
+    {
+      ...github.context.repo,
+      per_page: 100, // max per GitHub API
+    }
+  );
+
+  const pattern = new RegExp(`^${primaryKey}\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$`);
+
+  type CacheInfo = { id: number; key: string };
+  const matches: CacheInfo[] = allCaches
+    .filter((c): c is { id: number; key: string } =>
+      typeof c.id === "number" && typeof c.key === "string" && pattern.test(c.key))
+    .map(c => ({id: c.id, key: c.key
+  }));
+
+  core.info(`Total caches: ${allCaches.length}`);
+  core.info(`All matches: ${JSON.stringify(matches, null, 2)}`);
+  core.info(`Deleting ${matches.length} caches with key matching ${primaryKey}<date>`);
+
+  for (const { id, key } of matches) {
+    try {
+      await octokit.rest.actions.deleteActionsCacheById({
+        ...github.context.repo,
+        cache_id: id,
+      });
+      core.info(`✅ Deleted cache ${id} (${key})`);
+    } catch (error) {
+      core.error(`❌ Failed to delete cache ${id} (${key}): ${(error as Error).message}`);
+    }
+  }
+}
+
 async function run(earlyExit : boolean | undefined) : Promise<void> {
   try {
     const ccacheVariant = core.getState("ccacheVariant");
@@ -97,11 +147,15 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
 
     core.endGroup();
 
-    if (core.getState("shouldSave") !== "true") {
-      core.info("Not saving cache because 'save' is set to 'false'.");
-      return;
+    core.startGroup(`evict old caches`);
+    if (core.getBooleanInput("evict-old-caches")) {
+      await evictOldCaches();
+    } else {
+      core.info("Evicting old caches is skipped because 'evict-old-caches' is off.");
     }
+    core.endGroup();
 
+    core.startGroup(`evict old files`);
     const evictByAge = core.getState("evictOldFiles");
     if (evictByAge && ccacheVariant === "ccache") {
       const [time, unit] = common.parseEvictAgeParameter(evictByAge)
@@ -115,7 +169,13 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
         await evictOldFiles(time as number, unit);
       }
     }
+    core.endGroup();
 
+    core.startGroup(`save cache`);
+    if (core.getState("shouldSave") !== "true") {
+      core.info("Not saving cache because 'save' is set to 'false'.");
+      return;
+    }
     if (await ccacheIsEmpty(ccacheVariant, ccacheKnowsVerbosityFlag)) {
       core.info("Not saving cache because no objects are cached.");
     } else {
@@ -131,12 +191,14 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
       core.info(`Save cache using key "${saveKey}".`);
       await cache.saveCache(paths, saveKey);
     }
+    core.endGroup();
+
   } catch (error) {
     // A failure to save cache shouldn't prevent the entire CI run from
     // failing, so do not call setFailed() here.
     core.warning(`Saving cache failed: ${error}`);
   }
-
+  
   // Since we are not using http requests after this
   // we can safely exit early
   if (earlyExit) {
