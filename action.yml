@@ -36,6 +36,12 @@ inputs:
     description: "Publish stats as part of the job summary. Set to the title of the job summary section, or to the
      empty string to disable this feature. Requires CCache 4.10+"
     default: 'CCache Statistics'
+  summary-artifact:
+    description: "Publish stats as a JSON artifact, useful for aggregating results across the jobs of a matrix build
+     (e.g. in a separate job that downloads all such artifacts). Set to the base name of the artifact, a unique
+     suffix is appended automatically, or leave empty to disable this feature. Requires CCache 4.10+"
+    default: ''
+    required: false
   evict-old-files:
     description: "Corresponds to the ccache --evict-older-than AGE option, where AGE is the number of seconds or days
       followed by the 's' or 'd' suffix respectively. Also supports the special value 'job' which represents the time
