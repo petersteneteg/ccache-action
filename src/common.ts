@@ -64,6 +64,25 @@ export function formatStatsAsTable(statsJson: string) : SummaryTableRow[] | null
     ];
 }
 
+export interface JobSummaryExtra {
+    restored: string;
+    evicted: number;
+    saved: string;
+}
+
+export function buildJobSummaryTable(statsJson: string, extra: JobSummaryExtra) : SummaryTableRow[] | null {
+    const hitsRows = formatStatsAsTable(statsJson);
+    if (hitsRows === null) {
+        return null;
+    }
+    return [
+        [{data: "Restored", header: true}, {data: extra.restored, colspan: "2"}],
+        ...hitsRows,
+        [{data: "Evicted", header: true}, {data: `${extra.evicted}`, colspan: "2"}],
+        [{data: "Saved", header: true}, {data: extra.saved, colspan: "2"}],
+    ];
+}
+
 export function cacheDir(ccacheVariant: string): string {
     const ghWorkSpace = process.env.GITHUB_WORKSPACE || "unreachable, make ncc happy";
     if (ccacheVariant === "ccache") {

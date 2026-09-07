@@ -1,7 +1,12 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
 import * as core from "@actions/core";
 import * as cache from "@actions/cache";
 import * as exec from "@actions/exec";
 import * as github from "@actions/github";
+import { DefaultArtifactClient } from "@actions/artifact";
 import * as common from "./common";
 import { AgeUnit } from "./common";
 
@@ -56,6 +61,20 @@ async function hasJsonStats(ccacheVariant: string): Promise<boolean> {
   return version != null && version[0] >= 4 && version[1] >= 10;
 }
 
+async function uploadSummaryArtifact(baseName: string, data: unknown): Promise<void> {
+  try {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ccache-summary"));
+    const filePath = path.join(tmpDir, "ccache-summary.json");
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+
+    // Artifact names must be unique within a run, so append a random suffix to support matrix builds.
+    const artifactName = `${baseName}-${crypto.randomUUID()}`;
+    await new DefaultArtifactClient().uploadArtifact(artifactName, [filePath], tmpDir);
+  } catch (error) {
+    core.warning(`Could not upload summary artifact: ${error}`);
+  }
+}
+
 export async function evictOldFiles(age: number, unit: common.AgeUnit): Promise<void> {
   try {
     await exec.exec(`ccache --evict-older-than ${age}${unit}`);
@@ -92,9 +111,9 @@ export async function evictOldCaches(): Promise<number> {
 
   type CacheInfo = { id: number; key: string };
   const matches: CacheInfo[] = allCaches
-    .filter((c): c is { id: number; key: string } =>
+    .filter((c: { id?: number; key?: string }): c is CacheInfo =>
       typeof c.id === "number" && typeof c.key === "string" && pattern.test(c.key))
-    .map(c => ({
+    .map((c: CacheInfo) => ({
       id: c.id, key: c.key
     }));
 
@@ -187,22 +206,42 @@ async function run(earlyExit: boolean | undefined): Promise<void> {
 
     core.startGroup(`summary`);
     const jobSummaryTitle = core.getInput("job-summary");
-    if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
+    const summaryArtifactName = core.getInput("summary-artifact");
+    if ((jobSummaryTitle.length !== 0 || summaryArtifactName.length !== 0) && await hasJsonStats(ccacheVariant)) {
       const jsonStats =
         await exec.getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
       const stats = JSON.parse(jsonStats.stdout);
       if (stats === undefined) {
         core.warning("Could not parse json stats")
       } else {
-        const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
-        const misses = stats["cache_miss"];
-        const total = hits + misses;
-        core.notice(`Cache statistics:\n` +
-          ` * restored: ${core.getState("restoredInfo")}\n` +
-          ` * hits:     ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)\n` +
-          ` * evicted:  ${evictedCount}\n` +
-          ` * saved:    ${saveKey ? saveKey : "no"}`
-        );
+        const restoredInfo = core.getState("restoredInfo");
+        const savedInfo = saveKey ? saveKey : "no";
+
+        if (jobSummaryTitle.length !== 0) {
+          const table = common.buildJobSummaryTable(jsonStats.stdout, {
+            restored: restoredInfo,
+            evicted: evictedCount,
+            saved: savedInfo,
+          });
+          if (table === null) {
+            core.warning("Could not build job summary table");
+          } else {
+            await core.summary
+              .addHeading(jobSummaryTitle)
+              .addTable(table)
+              .write();
+          }
+        }
+
+        if (summaryArtifactName.length !== 0) {
+          await uploadSummaryArtifact(summaryArtifactName, {
+            variant: ccacheVariant,
+            restored: restoredInfo,
+            evicted: evictedCount,
+            saved: savedInfo,
+            stats,
+          });
+        }
       }
     }
     core.endGroup();
