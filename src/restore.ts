@@ -330,11 +330,13 @@ async function restore(ccacheVariant: string): Promise<void> {
   const restoredWith = await cache.restoreCache(paths, primaryKey, restoreKeys);
   if (restoredWith) {
     core.info(`Restored from cache key "${restoredWith}".`);
+    core.saveState("restoredInfo", `Restored from cache key "${restoredWith}".`);
     if (SELF_CI) {
       core.setOutput("test-cache-hit", true)
     }
   } else {
     core.info(`No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
+    core.saveState("restoredInfo", `No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
     if (SELF_CI) {
       core.setOutput("test-cache-hit", false)
     }
