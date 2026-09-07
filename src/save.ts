@@ -3,10 +3,10 @@ import * as cache from "@actions/cache";
 import * as exec from "@actions/exec";
 import * as github from "@actions/github";
 import * as common from "./common";
-import {AgeUnit} from "./common";
+import { AgeUnit } from "./common";
 
 
-async function ccacheIsEmpty(ccacheVariant : string, ccacheKnowsVerbosityFlag : boolean) : Promise<boolean> {
+async function ccacheIsEmpty(ccacheVariant: string, ccacheKnowsVerbosityFlag: boolean): Promise<boolean> {
   if (ccacheVariant === "ccache") {
     if (ccacheKnowsVerbosityFlag) {
       return !!(await getExecShellOutput("ccache -s -v")).stdout.match(/Files:.+\b0\b/);
@@ -18,7 +18,7 @@ async function ccacheIsEmpty(ccacheVariant : string, ccacheKnowsVerbosityFlag : 
   }
 }
 
-async function getVerbosity(verbositySetting : string) : Promise<string> {
+async function getVerbosity(verbositySetting: string): Promise<string> {
   switch (verbositySetting) {
     case '0':
       return '';
@@ -35,15 +35,15 @@ async function getVerbosity(verbositySetting : string) : Promise<string> {
   }
 }
 
-function getExecShellOutput(cmd : string) : Promise<exec.ExecOutput> {
-  return exec.getExecOutput("sh", ["-xc", cmd], {silent: true});
+function getExecShellOutput(cmd: string): Promise<exec.ExecOutput> {
+  return exec.getExecOutput("sh", ["-xc", cmd], { silent: true });
 }
 
 /**
  * Get if ccache supports output of stats in JSON format (from 4.10)
  * @param ccacheVariant
  */
-async function hasJsonStats(ccacheVariant: string) : Promise<boolean> {
+async function hasJsonStats(ccacheVariant: string): Promise<boolean> {
 
   if (ccacheVariant !== "ccache") {
     return false;
@@ -56,7 +56,7 @@ async function hasJsonStats(ccacheVariant: string) : Promise<boolean> {
   return version != null && version[0] >= 4 && version[1] >= 10;
 }
 
-export async function evictOldFiles(age : number, unit : common.AgeUnit) : Promise<void> {
+export async function evictOldFiles(age: number, unit: common.AgeUnit): Promise<void> {
   try {
     await exec.exec(`ccache --evict-older-than ${age}${unit}`);
   }
@@ -65,18 +65,18 @@ export async function evictOldFiles(age : number, unit : common.AgeUnit) : Promi
   }
 }
 
-export async function evictOldCaches() {
+export async function evictOldCaches(): Promise<number> {
   const primaryKey = core.getState("primaryKey");
   const token = core.getInput("gh-token");
   if (!token) {
     core.info("No github token provided, cannot list caches");
-    return;
+    return 0;
   }
-  if(core.getState("appendTimestamp") != "true") {
+  if (core.getState("appendTimestamp") != "true") {
     core.info("Evicting old caches is skipped because append-timestamp is not true.");
-    return; 
+    return 0;
   }
-  
+
   const octokit = github.getOctokit(token);
 
   // Paginate through all results
@@ -94,13 +94,15 @@ export async function evictOldCaches() {
   const matches: CacheInfo[] = allCaches
     .filter((c): c is { id: number; key: string } =>
       typeof c.id === "number" && typeof c.key === "string" && pattern.test(c.key))
-    .map(c => ({id: c.id, key: c.key
-  }));
+    .map(c => ({
+      id: c.id, key: c.key
+    }));
 
   core.info(`Total caches: ${allCaches.length}`);
   core.info(`All matches: ${JSON.stringify(matches, null, 2)}`);
   core.info(`Deleting ${matches.length} caches with key matching ${primaryKey}<date>`);
 
+  let deletedCount = 0;
   for (const { id, key } of matches) {
     try {
       await octokit.rest.actions.deleteActionsCacheById({
@@ -108,13 +110,16 @@ export async function evictOldCaches() {
         cache_id: id,
       });
       core.info(`✅ Deleted cache ${id} (${key})`);
+      deletedCount++;
     } catch (error) {
       core.error(`❌ Failed to delete cache ${id} (${key}): ${(error as Error).message}`);
     }
   }
+
+  return deletedCount;
 }
 
-async function run(earlyExit : boolean | undefined) : Promise<void> {
+async function run(earlyExit: boolean | undefined): Promise<void> {
   try {
     const ccacheVariant = core.getState("ccacheVariant");
     const primaryKey = core.getState("primaryKey");
@@ -129,33 +134,19 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
     core.startGroup(`${ccacheVariant} stats`);
     const verbosity = ccacheKnowsVerbosityFlag ? await getVerbosity(core.getInput("verbose")) : '';
     await exec.exec(`${ccacheVariant} -s${verbosity}`);
-
-    const jobSummaryTitle = core.getInput("job-summary");
-    if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
-      const jsonStats =
-          await exec.getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], {silent: true});
-      const formattedStats = common.formatStatsAsTable(jsonStats.stdout)
-      if (formattedStats === null) {
-        core.warning("Could not parse json stats")
-      } else {
-        await core.summary
-            .addHeading(jobSummaryTitle)
-            .addTable(formattedStats)
-            .write()
-      }
-    }
-
     core.endGroup();
 
     core.startGroup(`evict old caches`);
+    let evictedCount = 0;
     if (core.getBooleanInput("evict-old-caches")) {
-      await evictOldCaches();
+      evictedCount +=await evictOldCaches();
     } else {
       core.info("Evicting old caches is skipped because 'evict-old-caches' is off.");
     }
     core.endGroup();
 
     core.startGroup(`evict old files`);
+  
     const evictByAge = core.getState("evictOldFiles");
     if (evictByAge && ccacheVariant === "ccache") {
       const [time, unit] = common.parseEvictAgeParameter(evictByAge)
@@ -172,6 +163,7 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
     core.endGroup();
 
     core.startGroup(`save cache`);
+    let saveKey: string | undefined = undefined;
     if (core.getState("shouldSave") !== "true") {
       core.info("Not saving cache because 'save' is set to 'false'.");
       return;
@@ -179,7 +171,7 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
     if (await ccacheIsEmpty(ccacheVariant, ccacheKnowsVerbosityFlag)) {
       core.info("Not saving cache because no objects are cached.");
     } else {
-      let saveKey = primaryKey;
+      saveKey = primaryKey;
       if (core.getState("appendTimestamp") == "true") {
         saveKey += new Date().toISOString();
       } else {
@@ -192,6 +184,29 @@ async function run(earlyExit : boolean | undefined) : Promise<void> {
       await cache.saveCache(paths, saveKey);
     }
     core.endGroup();
+
+    core.startGroup(`summary`);
+    const jobSummaryTitle = core.getInput("job-summary");
+    if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
+      const jsonStats =
+        await exec.getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
+      const stats = JSON.parse(jsonStats.stdout);
+      if (stats === undefined) {
+        core.warning("Could not parse json stats")
+      } else {
+        const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
+        const misses = stats["cache_miss"];
+        const total = hits + misses;
+        core.notice(`Cache statistics:\n` +
+          ` * restored: ${core.getState("restoredInfo")}\n` +
+          ` * hits:     ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)\n` +
+          ` * evicted:  ${evictedCount}\n` +
+          ` * saved:    ${saveKey ? saveKey : "no"}`
+        );
+      }
+    }
+    core.endGroup();
+
 
   } catch (error) {
     // A failure to save cache shouldn't prevent the entire CI run from

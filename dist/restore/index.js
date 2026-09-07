@@ -90139,12 +90139,14 @@ async function restore(ccacheVariant) {
     const restoredWith = await restoreCache(paths, primaryKey, restoreKeys);
     if (restoredWith) {
         info(`Restored from cache key "${restoredWith}".`);
+        saveState("restoredInfo", `Restored from cache key "${restoredWith}".`);
         if (SELF_CI) {
             setOutput("test-cache-hit", true);
         }
     }
     else {
         info(`No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
+        saveState("restoredInfo", `No cache found, looked for "${primaryKey}" and restore keys: "${restoreKeys.join(", ")}"`);
         if (SELF_CI) {
             setOutput("test-cache-hit", false);
         }
