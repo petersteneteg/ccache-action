@@ -41989,7 +41989,7 @@ const _summary = new Summary();
  * @deprecated use `core.summary`
  */
 const markdownSummary = (/* unused pure expression or super */ null && (_summary));
-const summary = _summary;
+const summary = (/* unused pure expression or super */ null && (_summary));
 //# sourceMappingURL=summary.js.map
 ;// CONCATENATED MODULE: ./node_modules/@actions/core/lib/path-utils.js
 
@@ -95636,11 +95636,11 @@ async function evictOldCaches() {
     const token = getInput("gh-token");
     if (!token) {
         info("No github token provided, cannot list caches");
-        return;
+        return 0;
     }
     if (getState("appendTimestamp") != "true") {
         info("Evicting old caches is skipped because append-timestamp is not true.");
-        return;
+        return 0;
     }
     const octokit = getOctokit(token);
     // Paginate through all results
@@ -95651,11 +95651,13 @@ async function evictOldCaches() {
     const pattern = new RegExp(`^${primaryKey}\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$`);
     const matches = allCaches
         .filter((c) => typeof c.id === "number" && typeof c.key === "string" && pattern.test(c.key))
-        .map(c => ({ id: c.id, key: c.key
+        .map(c => ({
+        id: c.id, key: c.key
     }));
     info(`Total caches: ${allCaches.length}`);
     info(`All matches: ${JSON.stringify(matches, null, 2)}`);
     info(`Deleting ${matches.length} caches with key matching ${primaryKey}<date>`);
+    let deletedCount = 0;
     for (const { id, key } of matches) {
         try {
             await octokit.rest.actions.deleteActionsCacheById({
@@ -95663,11 +95665,13 @@ async function evictOldCaches() {
                 cache_id: id,
             });
             info(`✅ Deleted cache ${id} (${key})`);
+            deletedCount++;
         }
         catch (error) {
             core_error(`❌ Failed to delete cache ${id} (${key}): ${error.message}`);
         }
     }
+    return deletedCount;
 }
 async function run(earlyExit) {
     try {
@@ -95682,24 +95686,11 @@ async function run(earlyExit) {
         startGroup(`${ccacheVariant} stats`);
         const verbosity = ccacheKnowsVerbosityFlag ? await getVerbosity(getInput("verbose")) : '';
         await exec_exec(`${ccacheVariant} -s${verbosity}`);
-        const jobSummaryTitle = getInput("job-summary");
-        if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
-            const jsonStats = await getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
-            const formattedStats = formatStatsAsTable(jsonStats.stdout);
-            if (formattedStats === null) {
-                warning("Could not parse json stats");
-            }
-            else {
-                await summary
-                    .addHeading(jobSummaryTitle)
-                    .addTable(formattedStats)
-                    .write();
-            }
-        }
         endGroup();
         startGroup(`evict old caches`);
+        let evictedCount = 0;
         if (getBooleanInput("evict-old-caches")) {
-            await evictOldCaches();
+            evictedCount += await evictOldCaches();
         }
         else {
             info("Evicting old caches is skipped because 'evict-old-caches' is off.");
@@ -95721,6 +95712,7 @@ async function run(earlyExit) {
         }
         endGroup();
         startGroup(`save cache`);
+        let saveKey = undefined;
         if (getState("shouldSave") !== "true") {
             info("Not saving cache because 'save' is set to 'false'.");
             return;
@@ -95729,7 +95721,7 @@ async function run(earlyExit) {
             info("Not saving cache because no objects are cached.");
         }
         else {
-            let saveKey = primaryKey;
+            saveKey = primaryKey;
             if (getState("appendTimestamp") == "true") {
                 saveKey += new Date().toISOString();
             }
@@ -95739,6 +95731,26 @@ async function run(earlyExit) {
             const paths = [cacheDir(ccacheVariant)];
             info(`Save cache using key "${saveKey}".`);
             await cache_saveCache(paths, saveKey);
+        }
+        endGroup();
+        startGroup(`summary`);
+        const jobSummaryTitle = getInput("job-summary");
+        if (jobSummaryTitle.length !== 0 && await hasJsonStats(ccacheVariant)) {
+            const jsonStats = await getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
+            const stats = JSON.parse(jsonStats.stdout);
+            if (stats === undefined) {
+                warning("Could not parse json stats");
+            }
+            else {
+                const hits = stats["direct_cache_hit"] + stats["preprocessed_cache_hit"];
+                const misses = stats["cache_miss"];
+                const total = hits + misses;
+                notice(`Cache statistics:\n` +
+                    ` * restored: ${getState("restoredInfo")}\n` +
+                    ` * hits:     ${hits} / ${total} (${((hits / total) * 100).toPrecision(3)}%)\n` +
+                    ` * evicted:  ${evictedCount}\n` +
+                    ` * saved:    ${saveKey ? saveKey : "no"}`);
+            }
         }
         endGroup();
     }
