@@ -83074,8 +83074,11 @@ __nccwpck_require__.r(__webpack_exports__);
 // EXPORTS
 __nccwpck_require__.d(__webpack_exports__, {
   "default": () => (/* binding */ save),
-  evictOldCaches: () => (/* binding */ evictOldCaches),
-  evictOldFiles: () => (/* binding */ evictOldFiles)
+  evictOldCachesCall: () => (/* binding */ evictOldCachesCall),
+  evictOldFiles: () => (/* binding */ evictOldFiles),
+  evictOldFilesCall: () => (/* binding */ evictOldFilesCall),
+  saveCache: () => (/* binding */ save_saveCache),
+  saveSummary: () => (/* binding */ saveSummary)
 });
 
 // NAMESPACE OBJECT: ./node_modules/@azure/storage-blob/dist/esm/generated/src/models/mappers.js
@@ -141749,14 +141752,9 @@ function cacheDir(ccacheVariant) {
 
 
 
-async function ccacheIsEmpty(ccacheVariant, ccacheKnowsVerbosityFlag) {
+async function ccacheIsEmpty(ccacheVariant) {
     if (ccacheVariant === "ccache") {
-        if (ccacheKnowsVerbosityFlag) {
-            return !!(await getExecShellOutput("ccache -s -v")).stdout.match(/Files:.+\b0\b/);
-        }
-        else {
-            return !!(await getExecShellOutput("ccache -s")).stdout.match(/files in cache.+\b0\b/);
-        }
+        return !!(await getExecShellOutput("ccache -s")).stdout.match(/files in cache.+\b0\b/);
     }
     else {
         return !!(await getExecShellOutput("sccache -s")).stdout.match(/Cache size.+\b0 bytes/);
@@ -141806,15 +141804,7 @@ async function uploadSummaryArtifact(baseName, data) {
         warning(`Could not upload summary artifact: ${error}`);
     }
 }
-async function evictOldFiles(age, unit) {
-    try {
-        await exec_exec(`ccache --evict-older-than ${age}${unit}`);
-    }
-    catch (error) {
-        warning(`Error occurred evicting old cache files: ${error}`);
-    }
-}
-async function evictOldCaches() {
+async function evictOldCachesCall() {
     const primaryKey = getState("primaryKey");
     const token = getInput("gh-token");
     if (!token) {
@@ -141856,6 +141846,119 @@ async function evictOldCaches() {
     }
     return deletedCount;
 }
+async function saveSummary(ccacheVariant, saveKey, evictedCount) {
+    startGroup(`summary`);
+    const jobSummaryTitle = getInput("job-summary");
+    const summaryArtifactName = getInput("summary-artifact");
+    if ((jobSummaryTitle.length !== 0 || summaryArtifactName.length !== 0) && await hasJsonStats(ccacheVariant)) {
+        const jsonStats = await getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
+        const stats = JSON.parse(jsonStats.stdout);
+        if (stats === undefined) {
+            warning("Could not parse json stats");
+        }
+        else {
+            const restoredInfo = getState("restoredInfo");
+            const savedInfo = saveKey ? saveKey : "no";
+            if (jobSummaryTitle.length !== 0) {
+                const table = buildJobSummaryTable(jsonStats.stdout, {
+                    restored: restoredInfo,
+                    evicted: evictedCount,
+                    saved: savedInfo,
+                });
+                if (table === null) {
+                    warning("Could not build job summary table");
+                }
+                else {
+                    await summary
+                        .addHeading(jobSummaryTitle)
+                        .addTable(table)
+                        .write();
+                }
+            }
+            if (summaryArtifactName.length !== 0) {
+                await uploadSummaryArtifact(summaryArtifactName, {
+                    variant: ccacheVariant,
+                    restored: restoredInfo,
+                    evicted: evictedCount,
+                    saved: savedInfo,
+                    stats,
+                });
+            }
+        }
+    }
+    endGroup();
+}
+async function save_saveCache(ccacheVariant, primaryKey) {
+    startGroup(`save cache`);
+    let saveKey = undefined;
+    if (getState("shouldSave") !== "true") {
+        info("Not saving cache because 'save' is set to 'false'.");
+        return saveKey;
+    }
+    if (await ccacheIsEmpty(ccacheVariant)) {
+        info("Not saving cache because no objects are cached.");
+        return saveKey;
+    }
+    else {
+        saveKey = primaryKey;
+        if (getState("appendTimestamp") == "true") {
+            saveKey += new Date().toISOString();
+        }
+        else {
+            core_debug("Not appending timestamp because 'append-timestamp' is not set to 'true'.");
+        }
+        const paths = [cacheDir(ccacheVariant)];
+        info(`Save cache using key "${saveKey}".`);
+        await cache_saveCache(paths, saveKey);
+    }
+    endGroup();
+    return saveKey;
+}
+async function evictOldFilesCall(age, unit) {
+    try {
+        await exec_exec(`ccache --evict-older-than ${age}${unit}`);
+    }
+    catch (error) {
+        warning(`Error occurred evicting old cache files: ${error}`);
+    }
+}
+async function evictOldFiles(ccacheVariant) {
+    startGroup(`evict old files`);
+    const evictByAge = getState("evictOldFiles");
+    if (evictByAge && ccacheVariant === "ccache") {
+        const [time, unit] = parseEvictAgeParameter(evictByAge);
+        if (unit === AgeUnit.Job) {
+            const duration = getJobDurationInSeconds();
+            core_debug(`Evicting cache files older than ${duration} seconds`);
+            await evictOldFilesCall(duration, AgeUnit.Seconds);
+        }
+        else {
+            core_debug(`Evicting cache files older than ${time}${unit}`);
+            await evictOldFilesCall(time, unit);
+        }
+    }
+    endGroup();
+}
+async function evictOldCaches() {
+    startGroup(`evict old caches`);
+    let evictedCount = 0;
+    if (getBooleanInput("evict-old-caches")) {
+        evictedCount += await evictOldCachesCall();
+    }
+    else {
+        info("Evicting old caches is skipped because 'evict-old-caches' is off.");
+    }
+    endGroup();
+    return evictedCount;
+}
+async function showStatistics(ccacheVariant) {
+    startGroup(`${ccacheVariant} stats`);
+    // Some versions of ccache do not support --verbose
+    const ccacheKnowsVerbosityFlag = !!(await getExecShellOutput(`${ccacheVariant} --help`)).stdout.includes("--verbose");
+    const verbosity = ccacheKnowsVerbosityFlag ? await getVerbosity(getInput("verbose")) : '';
+    await exec_exec(`${ccacheVariant} -s${verbosity}`);
+    endGroup();
+}
 async function run(earlyExit) {
     try {
         const ccacheVariant = getState("ccacheVariant");
@@ -141864,98 +141967,11 @@ async function run(earlyExit) {
             notice("ccache setup failed, skipping saving.");
             return;
         }
-        // Some versions of ccache do not support --verbose
-        const ccacheKnowsVerbosityFlag = !!(await getExecShellOutput(`${ccacheVariant} --help`)).stdout.includes("--verbose");
-        startGroup(`${ccacheVariant} stats`);
-        const verbosity = ccacheKnowsVerbosityFlag ? await getVerbosity(getInput("verbose")) : '';
-        await exec_exec(`${ccacheVariant} -s${verbosity}`);
-        endGroup();
-        startGroup(`evict old caches`);
-        let evictedCount = 0;
-        if (getBooleanInput("evict-old-caches")) {
-            evictedCount += await evictOldCaches();
-        }
-        else {
-            info("Evicting old caches is skipped because 'evict-old-caches' is off.");
-        }
-        endGroup();
-        startGroup(`evict old files`);
-        const evictByAge = getState("evictOldFiles");
-        if (evictByAge && ccacheVariant === "ccache") {
-            const [time, unit] = parseEvictAgeParameter(evictByAge);
-            if (unit === AgeUnit.Job) {
-                const duration = getJobDurationInSeconds();
-                core_debug(`Evicting cache files older than ${duration} seconds`);
-                await evictOldFiles(duration, AgeUnit.Seconds);
-            }
-            else {
-                core_debug(`Evicting cache files older than ${time}${unit}`);
-                await evictOldFiles(time, unit);
-            }
-        }
-        endGroup();
-        startGroup(`save cache`);
-        let saveKey = undefined;
-        if (getState("shouldSave") !== "true") {
-            info("Not saving cache because 'save' is set to 'false'.");
-            return;
-        }
-        if (await ccacheIsEmpty(ccacheVariant, ccacheKnowsVerbosityFlag)) {
-            info("Not saving cache because no objects are cached.");
-        }
-        else {
-            saveKey = primaryKey;
-            if (getState("appendTimestamp") == "true") {
-                saveKey += new Date().toISOString();
-            }
-            else {
-                core_debug("Not appending timestamp because 'append-timestamp' is not set to 'true'.");
-            }
-            const paths = [cacheDir(ccacheVariant)];
-            info(`Save cache using key "${saveKey}".`);
-            await cache_saveCache(paths, saveKey);
-        }
-        endGroup();
-        startGroup(`summary`);
-        const jobSummaryTitle = getInput("job-summary");
-        const summaryArtifactName = getInput("summary-artifact");
-        if ((jobSummaryTitle.length !== 0 || summaryArtifactName.length !== 0) && await hasJsonStats(ccacheVariant)) {
-            const jsonStats = await getExecOutput(ccacheVariant, ["--print-stats", "--format=json"], { silent: true });
-            const stats = JSON.parse(jsonStats.stdout);
-            if (stats === undefined) {
-                warning("Could not parse json stats");
-            }
-            else {
-                const restoredInfo = getState("restoredInfo");
-                const savedInfo = saveKey ? saveKey : "no";
-                if (jobSummaryTitle.length !== 0) {
-                    const table = buildJobSummaryTable(jsonStats.stdout, {
-                        restored: restoredInfo,
-                        evicted: evictedCount,
-                        saved: savedInfo,
-                    });
-                    if (table === null) {
-                        warning("Could not build job summary table");
-                    }
-                    else {
-                        await summary
-                            .addHeading(jobSummaryTitle)
-                            .addTable(table)
-                            .write();
-                    }
-                }
-                if (summaryArtifactName.length !== 0) {
-                    await uploadSummaryArtifact(summaryArtifactName, {
-                        variant: ccacheVariant,
-                        restored: restoredInfo,
-                        evicted: evictedCount,
-                        saved: savedInfo,
-                        stats,
-                    });
-                }
-            }
-        }
-        endGroup();
+        await showStatistics(ccacheVariant);
+        const evictedCount = await evictOldCaches();
+        await evictOldFiles(ccacheVariant);
+        const saveKey = await save_saveCache(ccacheVariant, primaryKey);
+        await saveSummary(ccacheVariant, saveKey, evictedCount);
     }
     catch (error) {
         // A failure to save cache shouldn't prevent the entire CI run from
