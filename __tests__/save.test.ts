@@ -59,13 +59,13 @@ describe('ccache save', () => {
 
     test('evict old files from the cache by age in seconds', async () => {
         const ageInSeconds = 42;
-        await save.evictOldFiles(ageInSeconds, AgeUnit.Seconds);
+        await save.evictOldFilesCall(ageInSeconds, AgeUnit.Seconds);
         expect(mockExec).toHaveBeenCalledWith(`ccache --evict-older-than ${ageInSeconds}s`);
     });
 
     test('evict old files from the cache by age in days', async () => {
         const ageInDays = 3;
-        await save.evictOldFiles(ageInDays, AgeUnit.Days);
+        await save.evictOldFilesCall(ageInDays, AgeUnit.Days);
         expect(mockExec).toHaveBeenCalledWith(`ccache --evict-older-than ${ageInDays}d`);
     });
 });
